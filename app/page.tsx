@@ -1,69 +1,129 @@
-import Image from "next/image";
+"use client";
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
+import { MiniSteps } from "@/components/MiniSteps";
+import { Shell } from "@/components/Shell";
+import { useL, type Key } from "@/lib/i18n";
+import type { Triage } from "@/lib/triage";
+import type { Kind, Status, StepKey } from "@/lib/types";
+
+interface Item {
+  id: string; kind: Kind; status: Status; step: StepKey; applicant: string; village: string;
+  khata: string; khasra: string; area: number; submittedAt: string; triage: Triage;
+}
+interface Payload { items: Item[]; clockOffsetDays: number; aiEnabled: boolean }
 
 export default function Home() {
+  const { t } = useL();
+  const [data, setData] = useState<Payload | null>(null);
+
+  const [tick, setTick] = useState(0);
+  const load = useCallback(() => setTick((x) => x + 1), []);
+  useEffect(() => {
+    let off = false;
+    fetch("/api/applications", { cache: "no-store" }).then((r) => r.json()).then((d) => { if (!off) setData(d); });
+    return () => { off = true; };
+  }, [tick]);
+
+  const items = data?.items ?? [];
+  const attention = items.filter((i) => i.triage.group === "attention");
+  const waiting = items.filter((i) => i.triage.group === "waiting");
+  const closed = items.filter((i) => i.triage.group === "closed");
+  const overdue = attention.filter((i) => i.triage.daysLeft < 0).length;
+  const soon = attention.filter((i) => i.triage.daysLeft >= 0 && i.triage.daysLeft <= 7).length;
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+    <Shell clockOffset={data?.clockOffsetDays} aiOn={data?.aiEnabled} onDemo={load}>
+      {!data ? (
+        <p className="py-10 text-center text-muted">{t("loading")}</p>
+      ) : (
+        <>
+          <div className="mb-5 grid grid-cols-3 gap-3">
+            <Stat n={overdue} label={t("sOverdue")} tone="bad" />
+            <Stat n={soon} label={t("sDueSoon")} tone="warn" />
+            <Stat n={attention.length + waiting.length} label={t("sOpen")} tone="ok" />
+          </div>
+
+          <Section title={t("needsAttention")} hint={t("howRanked")}>
+            {attention.map((i) => <Row key={i.id} i={i} />)}
+            {attention.length === 0 && <Empty />}
+          </Section>
+
+          <Section title={t("waiting")}>
+            {waiting.map((i) => <Row key={i.id} i={i} muted />)}
+            {waiting.length === 0 && <Empty />}
+          </Section>
+
+          {closed.length > 0 && (
+            <Section title={t("closed")}>
+              {closed.map((i) => <Row key={i.id} i={i} muted />)}
+            </Section>
+          )}
+        </>
+      )}
+    </Shell>
+  );
+}
+
+function Empty() {
+  const { t } = useL();
+  return <p className="rounded-xl border border-dashed border-line p-4 text-center text-sm text-muted">{t("nothingHere")}</p>;
+}
+
+function Stat({ n, label, tone }: { n: number; label: string; tone: "bad" | "warn" | "ok" }) {
+  const c = { bad: "bg-bad-soft text-bad", warn: "bg-warn-soft text-warn", ok: "bg-ok-soft text-ok" }[tone];
+  return (
+    <div className={`rounded-2xl p-3 text-center ${c}`}>
+      <div className="text-3xl font-extrabold leading-none">{n}</div>
+      <div className="mt-1 text-xs font-semibold">{label}</div>
     </div>
+  );
+}
+
+function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <section className="mb-7">
+      <h2 className="text-lg font-bold">{title}</h2>
+      {hint && <p className="mb-2 text-xs text-muted">{hint}</p>}
+      <div className="mt-2 space-y-3">{children}</div>
+    </section>
+  );
+}
+
+function Row({ i, muted }: { i: Item; muted?: boolean }) {
+  const { t, bi, date } = useL();
+  const closed = i.triage.group === "closed";
+  const late = i.triage.daysLeft < 0;
+  const sla = late ? `${-i.triage.daysLeft} ${t("slaLate")}` : `${i.triage.daysLeft} ${t("slaLeft")}`;
+  const slaTone = late ? "bg-bad-soft text-bad" : i.triage.daysLeft <= 7 ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok";
+  const stTone = i.status === "approved" ? "bg-ok-soft text-ok" : i.status === "rejected" ? "bg-bad-soft text-bad" : "bg-info-soft text-info";
+  return (
+    <Link href={`/a/${i.id}`} className={`card block p-4 transition hover:border-brand hover:shadow-sm ${muted ? "opacity-90" : ""}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-lg font-bold">{i.applicant}</div>
+          <div className="text-sm text-muted">
+            {t(`kind_${i.kind}` as Key)} · {t("village")} {i.village} · {t("khata")} {i.khata}, {t("plot")} {i.khasra} · {i.area} {t("dec")}
+          </div>
+        </div>
+        {closed ? (
+          <span className={`chip shrink-0 ${stTone}`}>{t(`st_${i.status}` as Key)}</span>
+        ) : (
+          <span className={`chip shrink-0 ${slaTone}`}>{sla}</span>
+        )}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <MiniSteps step={i.step} closed={closed} />
+        <span className="text-xs text-muted">{i.id} · {date(i.submittedAt)}</span>
+      </div>
+      {i.triage.waitingFor ? (
+        <p className="mt-2 text-sm font-medium text-info">⏳ {bi(i.triage.waitingFor)}</p>
+      ) : !closed ? (
+        <p className="mt-2 text-sm">
+          <span className="text-muted">{t("whyFirst")} </span>
+          <span className="font-semibold">{i.triage.reasons.map((r) => bi(r)).join(" · ")}</span>
+        </p>
+      ) : null}
+    </Link>
   );
 }
